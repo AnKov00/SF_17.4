@@ -7,6 +7,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram import  Router, types
 
+from token_data import API
 from random import choices
 from googletrans import  Translator
 
@@ -26,30 +27,32 @@ class RecipePath(StatesGroup):
 
 @router.message(Command('category_search_random'))
 async def select_category(message: Message, command: CommandObject, state: FSMContext):
-    try:#Если параметр введённый с командой - слово, символ или ноль, тогда выставляет переменной значение 1
-        if command.args != "0":
+    try:
+        #Если command.args не пустое, содержит только цифры, и число > 0, то кол-во рецептов из класса RecipePath ему равно.
+        if command.args and command.args.isdigit() and int(command.args) > 0:
             RecipePath.quantity_recipes = int(command.args)
-        else:
+        else: # иначе количество рецептов равно 1
             RecipePath.quantity_recipes = 1
-    except Exception:
-        RecipePath.quantity_recipes = 1
-    async with aiohttp.ClientSession() as session:
-        async with session.get('https://www.themealdb.com/api/json/v1/1/list.php?c=list') as response:
-            if response.status == 200:
-                category_data = await response.json()
-                kb = ReplyKeyboardBuilder()
-                for v in category_data['meals']:
-                    kb.add(types.KeyboardButton(text=v['strCategory']))
-                kb.adjust(4)
-                await message.answer("Выберите категорию: ", reply_markup=kb.as_markup(resize_keyboard=True))
-                await state.set_state(RecipePath.wait_category.state)
-            else:
-                await message.answer(f'Ошибка соединения с сервером')
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f'{API}list.php?c=list') as response:
+                if response.status == 200: #Создаём сессию и проверяем статус
+                    category_data = await response.json()
+                    kb = ReplyKeyboardBuilder()#Создал клавиатуру
+                    for v in category_data['meals']:
+                        kb.add(types.KeyboardButton(text=v['strCategory']))#Создал кнопки с текстом название категорий
+                    kb.adjust(4)
+                    await message.answer("Выберите категорию: ", reply_markup=kb.as_markup(resize_keyboard=True))
+                    await state.set_state(RecipePath.wait_category.state)# Перевел общение с ботом на следующую ступень
+                else:
+                    await message.answer('Ошибка соединения с сервером. Попробуйте позже.')
+    except Exception as e:
+        await message.answer(f'Произошла ошибка: {str(e)}. Попробуйте снова.')
 
 @router.message(RecipePath.wait_category)
 async def select_dish(message: types.Message, state: FSMContext):
     async with aiohttp.ClientSession() as session:
-        async with session.get(f'https://www.themealdb.com/api/json/v1/1/filter.php?c={message.text}') as resp:
+        async with session.get(f'{API}filter.php?c={message.text}') as resp:
             if resp.status == 200:
                 menu_data = await resp.json()
                 rec_len = choices(menu_data['meals'], k=RecipePath.quantity_recipes)
@@ -60,8 +63,9 @@ async def select_dish(message: types.Message, state: FSMContext):
                     rec_name.append(name.text)
 
                 kb = [[types.KeyboardButton(text='Покажи Рецепты!')]]
-                keyboard = types.ReplyKeyboardMarkup(keyboard=kb)
-                await message.answer(f'Как вам такие варианты:\n{'\n'.join(rec_name)}', reply_markup=keyboard)
+                keyboard = types.ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
+                await message.answer(f'Как вам такие варианты:\n{'\n'.join(rec_name)}',
+                                     reply_markup=keyboard)
                 await state.set_state(RecipePath.get_recept.state)
 
 @router.message(RecipePath.get_recept)
@@ -69,7 +73,7 @@ async def get_recept(message: types.Message, state: FSMContext):
     data = RecipePath.recept_dict
     async with aiohttp.ClientSession() as session:
         for k, v in data.items():
-            async with session.get(f'http://www.themealdb.com/api/json/v1/1/lookup.php?i={v}') as resp:
+            async with session.get(f'{API}lookup.php?i={v}') as resp:
                 rec = await resp.json()
                 ru_rec = translator.translate(rec['meals'][0]['strInstructions'], dest='ru')
                 await message.answer(f'Что бы приготовить {k} Вам потребуется:\n{ru_rec.text}\n{rec['meals'][0]['strMealThumb']}')
